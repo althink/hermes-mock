@@ -3,6 +3,8 @@ name: Go
 on:
   push:
     branches: [ main ]
+    tags:
+      - v*
   pull_request:
     branches: [ main ]
 
@@ -23,3 +25,17 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+
+    - name: Build docker
+      run: docker build --tag althink/hermes-mock .
+
+    - name: Build docker
+      run: docker build --tag althink/hermes-mock .
+
+    - name: Push to Docker Hub
+      uses: docker/build-push-action@v1
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        repository: althink/hermes-mock
+        tag_with_ref: true
