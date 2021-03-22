@@ -149,6 +149,6 @@ func queryEvents(w http.ResponseWriter, req *http.Request) {
 	if info, ok := eventsCache.Get(correlationID); ok {
 		json.NewEncoder(w).Encode(info.(*CorrelationInfo).Events)
 	} else {
-		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode([]EventInfo{})
 	}
 }
