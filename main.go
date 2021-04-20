@@ -17,10 +17,15 @@ var subscriptions map[string]map[string]string
 var httpClient = &http.Client{
 	Timeout: time.Minute,
 }
-var eventsCache = cache.New(5*time.Minute, 10*time.Minute)
+var eventsCache = cache.New(10*time.Minute, 10*time.Minute)
+var eventsByTopicCache = cache.New(10*time.Minute, 10*time.Minute)
 var correlationHeader = "X-Correlation-Id"
 
 type CorrelationInfo struct {
+	Events []EventInfo
+}
+
+type TopicInfo struct {
 	Events []EventInfo
 }
 
@@ -41,6 +46,7 @@ func main() {
 	rtr.HandleFunc("/groups", registerGroup).Methods("POST")
 	rtr.HandleFunc("/topics", registerTopic).Methods("POST")
 	rtr.HandleFunc("/topics/{topic:[a-zA-Z._-]+}/subscriptions", registerSubscription).Methods("POST")
+	rtr.HandleFunc("/topics/{topic:[a-zA-Z._-]+}/events", queryTopicEvents).Methods("GET")
 	rtr.HandleFunc("/events/{correlationID:[a-zA-Z0-9_-]+}", queryEvents).Methods("GET")
 
 	go startEventsCacheJob()
@@ -129,17 +135,32 @@ func filterHeaders(headers map[string][]string) map[string][]string {
 
 func startEventsCacheJob() {
 	for event := range eventsChan {
-		var info *CorrelationInfo
+
+		// register in correlationId cache
+		var correlationInfo *CorrelationInfo
 		if fromCache, ok := eventsCache.Get(event.CorrelationID); ok {
-			info = fromCache.(*CorrelationInfo)
+			correlationInfo = fromCache.(*CorrelationInfo)
 		} else {
-			info = &CorrelationInfo{Events: []EventInfo{}}
-			err := eventsCache.Add(event.CorrelationID, info, cache.DefaultExpiration)
+			correlationInfo = &CorrelationInfo{Events: []EventInfo{}}
+			err := eventsCache.Add(event.CorrelationID, correlationInfo, cache.DefaultExpiration)
 			if err != nil {
 				fmt.Printf("Failed to add to cache: %v\n", err)
 			}
 		}
-		info.Events = append(info.Events, event)
+		correlationInfo.Events = append(correlationInfo.Events, event)
+
+		// register in topic cache
+		var topicInfo *TopicInfo
+		if fromCache, ok := eventsByTopicCache.Get(event.TopicName); ok {
+			topicInfo = fromCache.(*TopicInfo)
+		} else {
+			topicInfo = &TopicInfo{Events: []EventInfo{}}
+			err := eventsByTopicCache.Add(event.TopicName, topicInfo, cache.DefaultExpiration)
+			if err != nil {
+				fmt.Printf("Failed to add to cache: %v\n", err)
+			}
+		}
+		topicInfo.Events = append(topicInfo.Events, event)
 	}
 }
 
@@ -148,6 +169,16 @@ func queryEvents(w http.ResponseWriter, req *http.Request) {
 	correlationID := params["correlationID"]
 	if info, ok := eventsCache.Get(correlationID); ok {
 		json.NewEncoder(w).Encode(info.(*CorrelationInfo).Events)
+	} else {
+		json.NewEncoder(w).Encode([]EventInfo{})
+	}
+}
+
+func queryTopicEvents(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	topicName := params["topic"]
+	if info, ok := eventsByTopicCache.Get(topicName); ok {
+		json.NewEncoder(w).Encode(info.(*TopicInfo).Events)
 	} else {
 		json.NewEncoder(w).Encode([]EventInfo{})
 	}
